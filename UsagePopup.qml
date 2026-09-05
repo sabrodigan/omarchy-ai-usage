@@ -56,8 +56,8 @@ PopupWindow {
     return String(Math.round(n))
   }
 
-  implicitWidth: 400
-  implicitHeight: Math.min(520, Math.max(120, content.implicitHeight + cardPadding * 2))
+  implicitWidth: 440
+  implicitHeight: Math.min(540, Math.max(120, content.implicitHeight + cardPadding * 2))
 
   visible: open || card.opacity > 0
   color: "transparent"
@@ -304,85 +304,77 @@ PopupWindow {
     required property var modelData
     readonly property real pct: modelData.percent_used || 0
     readonly property bool warn: pct >= root.warnPercent
-    height: 46
+    readonly property real cost: modelData.estimated_cost_usd || 0
+    height: 44
 
-    Column {
-      anchors.fill: parent
-      spacing: 4
+    // Line 1 — provider name + tier on the left, percent pinned right.
+    Text {
+      id: pctText
+      anchors.right: parent.right
+      anchors.top: parent.top
+      text: Math.round(rowDelegate.pct) + "%"
+      color: rowDelegate.warn ? root.urgent : root.fg
+      font.family: root.fontFamily
+      font.pixelSize: 12
+      font.bold: true
+    }
 
-      Row {
-        width: parent.width
-        spacing: 6
+    Row {
+      anchors.left: parent.left
+      anchors.right: pctText.left
+      anchors.rightMargin: 8
+      anchors.top: parent.top
+      spacing: 6
 
-        Text {
-          text: modelData.display_name || modelData.provider_id || "?"
-          color: root.fg
-          font.family: root.fontFamily
-          font.pixelSize: 12
-          font.bold: true
-          width: parent.width * 0.42
-          elide: Text.ElideRight
-        }
-
-        Text {
-          text: modelData.model_or_tier || ""
-          color: root.safeMuted
-          font.family: root.fontFamily
-          font.pixelSize: 10
-          width: parent.width * 0.30
-          elide: Text.ElideRight
-          anchors.verticalCenter: parent.verticalCenter
-        }
-
-        Item { width: parent.width * 0.28 - 12; height: 1 }
-
-        Text {
-          text: Math.round(rowDelegate.pct) + "%"
-          color: rowDelegate.warn ? root.urgent : root.fg
-          font.family: root.fontFamily
-          font.pixelSize: 12
-          font.bold: true
-          anchors.verticalCenter: parent.verticalCenter
-        }
+      Text {
+        id: nameText
+        text: modelData.display_name || modelData.provider_id || "?"
+        color: root.fg
+        font.family: root.fontFamily
+        font.pixelSize: 12
+        font.bold: true
       }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.max(0, parent.width - nameText.width - parent.spacing)
+        text: modelData.model_or_tier || ""
+        color: root.safeMuted
+        font.family: root.fontFamily
+        font.pixelSize: 10
+        elide: Text.ElideRight
+      }
+    }
 
-      Row {
-        width: parent.width
-        spacing: 8
+    // Line 2 — progress track fills the row, amounts pinned right.
+    Text {
+      id: amountText
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: 2
+      text: root.formatAmount(modelData.consumed || 0, modelData.unit)
+            + " / " + root.formatAmount(modelData.quota || 0, modelData.unit)
+            + (rowDelegate.cost > 0 ? "   " + root.formatCost(rowDelegate.cost) : "")
+      color: root.safeMuted
+      font.family: root.fontFamily
+      font.pixelSize: 9
+    }
 
-        Rectangle {
-          id: track
-          width: parent.width * 0.68
-          height: 6
-          radius: 3
-          anchors.verticalCenter: parent.verticalCenter
-          color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
+    Rectangle {
+      id: track
+      anchors.left: parent.left
+      anchors.right: amountText.left
+      anchors.rightMargin: 10
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: 6
+      height: 6
+      radius: 3
+      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
 
-          Rectangle {
-            width: Math.max(2, Math.min(1, rowDelegate.pct / 100) * parent.width)
-            height: parent.height
-            radius: 3
-            color: root.barColor(rowDelegate.pct)
-          }
-        }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.formatAmount(modelData.consumed || 0, modelData.unit)
-                + " / " + root.formatAmount(modelData.quota || 0, modelData.unit)
-          color: root.safeMuted
-          font.family: root.fontFamily
-          font.pixelSize: 9
-        }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          visible: (modelData.estimated_cost_usd || 0) > 0
-          text: root.formatCost(modelData.estimated_cost_usd || 0)
-          color: root.safeMuted
-          font.family: root.fontFamily
-          font.pixelSize: 9
-        }
+      Rectangle {
+        width: Math.max(2, Math.min(1, rowDelegate.pct / 100) * parent.width)
+        height: parent.height
+        radius: 3
+        color: root.barColor(rowDelegate.pct)
       }
     }
   }
