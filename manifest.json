@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "sabrodigan.ai-usage",
+  "name": "AI Model Usage",
+  "version": "1.0.0",
+  "author": "Stephen Brodigan",
+  "license": "AGPL-3.0-or-later",
+  "description": "Live multi-provider AI token, request and quota tracking in the Omarchy bar, with a popup breakdown and a jump to the full `usage watch` dashboard.",
+  "homepage": "https://github.com/sabrodigan/omarchy-ai-usage",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Model Usage",
+    "description": "Top AI provider's quota use on the bar; click for the full ranked breakdown.",
+    "category": "Developer Tools",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "badgeMetric": "Top usage %",
+      "refreshIntervalSec": 60,
+      "warnPercent": 80,
+      "timeoutSec": 8
+    },
+    "schema": [
+      {
+        "key": "badgeMetric",
+        "type": "enum",
+        "label": "Bar badge shows",
+        "options": ["Top usage %", "Total cost", "Both"],
+        "defaultValue": "Top usage %",
+        "description": "What the compact badge on the bar displays."
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 15,
+        "max": 900,
+        "step": 5,
+        "defaultValue": 60,
+        "description": "How often live provider data is refreshed. Lower values hit provider APIs more often."
+      },
+      {
+        "key": "warnPercent",
+        "type": "integer",
+        "label": "Warn at percent",
+        "min": 50,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 80,
+        "description": "Badge and rows turn urgent once a provider passes this share of its quota."
+      },
+      {
+        "key": "timeoutSec",
+        "type": "integer",
+        "label": "Query timeout (seconds)",
+        "min": 2,
+        "max": 30,
+        "step": 1,
+        "defaultValue": 8,
+        "description": "Per-refresh timeout passed to `usage`."
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Resolve the `usage` binary and exec it with the given args.
+#
+# Preference order:
+#   1. A `usage` already on PATH (a real install the user manages / updates).
+#   2. The static binary bundled with this plugin, picked by CPU arch.
+#
+# The bundled binaries are CGO-free static Go builds, so they run on any glibc
+# or musl Omarchy install with no runtime dependencies.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+if command -v usage >/dev/null 2>&1; then
+  exec usage "$@"
+fi
+
+case "$(uname -m)" in
+  x86_64 | amd64) arch=amd64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *)
+    echo "omarchy-ai-usage: unsupported CPU architecture $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+bundled="$here/usage-linux-$arch"
+if [[ ! -x "$bundled" ]]; then
+  chmod +x "$bundled" 2>/dev/null || true
+fi
+[[ -x "$bundled" ]] || {
+  echo "omarchy-ai-usage: bundled binary missing: $bundled" >&2
+  exit 1
+}
+
+exec "$bundled" "$@"

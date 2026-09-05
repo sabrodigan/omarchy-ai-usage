@@ -1,0 +1,7 @@
+# Local scratch
+*.log
+*.tmp
+.DS_Store
+
+# Build artifacts are intentionally committed under bin/ so the plugin works
+# with zero build step on a fresh Omarchy install. Nothing to ignore there.
