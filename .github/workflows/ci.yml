@@ -31,15 +31,23 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
       # End-to-end: run the collector against the latest published `usage` binary.
+      # The usage repo also runs this contract test against every commit it builds,
+      # so if its releases aren't readable from here, warn instead of failing.
       - name: Download latest usage release
+        id: usage
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download --repo sabrodigan/ai-usage-command \
-            --pattern usage-linux-amd64 --pattern SHA256SUMS --dir "$RUNNER_TEMP/usage"
+          if ! gh release download --repo sabrodigan/ai-usage-command \
+               --pattern usage-linux-amd64 --pattern SHA256SUMS --dir "$RUNNER_TEMP/usage"; then
+            echo "::warning::usage releases are not readable from this repo; contract test skipped"
+            exit 0
+          fi
           cd "$RUNNER_TEMP/usage"
           sha256sum --check --ignore-missing SHA256SUMS
           chmod +x usage-linux-amd64
+          echo "bin=$RUNNER_TEMP/usage/usage-linux-amd64" >> "$GITHUB_OUTPUT"
 
       - name: Contract test against usage release
-        run: USAGE_BIN="$RUNNER_TEMP/usage/usage-linux-amd64" python3 -m unittest tests.test_usage.UsageLocalContractTest -v
+        if: steps.usage.outputs.bin != ''
+        run: USAGE_BIN="${{ steps.usage.outputs.bin }}" python3 -m unittest tests.test_usage.UsageLocalContractTest -v
