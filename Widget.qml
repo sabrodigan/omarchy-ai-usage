@@ -34,15 +34,14 @@ Item {
       return settings[key]
     return fallback
   }
-  readonly property string badgeMetric: setting("badgeMetric", "Top usage %")
+  readonly property string badgeMetric: setting("badgeMetric", "Total tokens")
   readonly property int refreshMs: Math.max(15, Number(setting("refreshIntervalSec", 60))) * 1000
   readonly property int warnPercent: Number(setting("warnPercent", 80))
-  readonly property int timeoutSec: Math.max(2, Number(setting("timeoutSec", 8)))
+  readonly property int timeoutSec: Math.max(2, Number(setting("timeoutSec", 30)))
 
   // --- binary resolution -------------------------------------------------------
   // Qt.resolvedUrl(".") is this QML file's directory, wherever the plugin was
-  // installed. bin/usage-run then prefers a system `usage`, else the bundled
-  // static build.
+  // installed. bin/usage-run reads local session counters through Tokscale.
   readonly property string pluginDir: {
     var u = Qt.resolvedUrl(".").toString()
     if (u.indexOf("file://") === 0) u = u.substring(7)
@@ -54,6 +53,8 @@ Item {
   // --- state -------------------------------------------------------------------
   property var providers: []
   property real totalCost: 0
+  property real totalTokens: 0
+  property string updatedAt: ""
   property bool loaded: false
   property bool failed: false
   property string errorText: ""
@@ -79,15 +80,17 @@ Item {
   }
 
   readonly property string badgeText: {
-    if (!loaded) return failed ? "!" : "…"
+    if (failed) return "!"
+    if (!loaded) return "…"
     if (providers.length === 0) return "—"
-    var pct = root.formatPercent(topProvider.percent_used)
-    var cost = root.formatCost(totalCost)
+    var tokens = root.formatAmount(totalTokens, "tokens")
+    var pct = topProvider.quota > 0 ? root.formatPercent(topProvider.percent_used) : tokens
+    var cost = "~" + root.formatCost(totalCost)
     if (badgeMetric === "Total cost") return cost
     if (badgeMetric === "Both") return pct + " · " + cost
-    return pct
+    return badgeMetric === "Top usage %" ? pct : tokens
   }
-  readonly property color badgeColor: (loaded && anyWarn) ? warnColor : baseColor
+  readonly property color badgeColor: (failed || (loaded && anyWarn)) ? warnColor : baseColor
 
   // --- refresh ---------------------------------------------------------------
   function refresh() {
@@ -102,7 +105,7 @@ Item {
       onStreamFinished: root.ingest(text)
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0 && !root.loaded) {
+      if (exitCode !== 0) {
         root.failed = true
         root.loaded = true
         if (root.errorText === "")
@@ -122,11 +125,19 @@ Item {
       return
     }
 
-    var list = (data.providers || []).slice()
-    list.sort(function (a, b) { return (b.percent_used || 0) - (a.percent_used || 0) })
+    if (data.error || !Array.isArray(data.providers)) {
+      root.failed = true
+      root.loaded = true
+      root.errorText = data.error || "Invalid collector output"
+      return
+    }
+    var list = data.providers.slice()
+    list.sort(function (a, b) { return (b.consumed || 0) - (a.consumed || 0) })
 
     root.providers = list
     root.totalCost = Number(data.total_cost_usd || 0)
+    root.totalTokens = Number(data.total_tokens_consumed || 0)
+    root.updatedAt = data.timestamp || ""
     root.snapshotMode = data.snapshot_mode || ""
     root.failed = false
     root.errorText = ""
@@ -179,7 +190,7 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       text: root.icon
       color: root.badgeColor
-      font.family: bar ? bar.fontFamily : "monospace"
+      font.family: root.bar ? root.bar.fontFamily : "monospace"
       font.pixelSize: 14
       opacity: root.loaded ? 1 : 0.5
     }
@@ -189,7 +200,7 @@ Item {
       visible: !root.vertical && root.badgeText !== ""
       text: root.badgeText
       color: root.badgeColor
-      font.family: bar ? bar.fontFamily : "monospace"
+      font.family: root.bar ? root.bar.fontFamily : "monospace"
       font.pixelSize: 12
       font.bold: root.loaded && root.anyWarn
     }
@@ -206,14 +217,11 @@ Item {
     failed: root.failed
     errorText: root.errorText
     snapshotMode: root.snapshotMode
+    updatedAt: root.updatedAt
     warnPercent: root.warnPercent
     onRefreshRequested: root.refresh()
     onWatchRequested: root.openWatch()
-    onScanRequested: {
-      Quickshell.execDetached(["bash", "-lc",
-        "exec \"${TERMINAL:-alacritty}\" -e \"$0\" scan new", root.usageRun])
-      root.close()
-    }
+    onScanRequested: root.refresh()
   }
 
   Component.onCompleted: refresh()

@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Give the upstream dashboard a separate footer without altering its display."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+
+
+def main():
+    tmux = shutil.which('tmux')
+    if not tmux:
+        print('AI Usage: install tmux to display the dashboard footer.', file=sys.stderr)
+        return 1
+    manifest = json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())
+    # Quote literal metadata for tmux configuration, including its format syntax.
+    label = 'AI Usage v{} · {}'.format(manifest['version'], manifest['author'])
+    label = ''.join(c for c in label if c.isprintable()).replace('#', '##')
+    label = label.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+    config = '\n'.join([
+        'set -g status on', 'set -g status-position bottom',
+        'set -g status-style "bg=default,fg=cyan"',
+        'set -g status-left-length 100', 'set -g status-right-length 24',
+        'set -g status-justify left',
+        'set -g window-status-format ""', 'set -g window-status-current-format ""',
+        'set -g status-left " ' + label + '"',
+        'set -g status-right "Powered by Tokscale "',
+        'set -g mouse on', 'set -g escape-time 0',
+        'set -g default-terminal "tmux-256color"',
+        'set -g exit-empty on', 'set -g destroy-unattached on',
+    ])
+    # A private server avoids changing existing tmux sessions or user settings.
+    server = 'ai-usage-' + uuid.uuid4().hex
+    env = dict(os.environ)
+    env.pop('TMUX', None)
+    with tempfile.TemporaryDirectory(prefix='ai-usage-dashboard-') as folder:
+        path = Path(folder) / 'tmux.conf'
+        path.write_text(config + '\n')
+        return subprocess.call([tmux, '-L', server, '-f', str(path),
+                                'new-session', '-s', 'dashboard', *sys.argv[1:]], env=env)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,7 +1,18 @@
-# Local scratch
+# Private runtime state never belongs in a plugin release.
+*.db
+*.db-*
+*.sqlite*
+*.jsonl
 *.log
 *.tmp
+.env
+.env.*
+auth.json
+config.json
+history.json
+.vault.key
+__pycache__/
+*.pyc
+.cache/
+dist/
 .DS_Store
-
-# Build artifacts are intentionally committed under bin/ so the plugin works
-# with zero build step on a fresh Omarchy install. Nothing to ignore there.

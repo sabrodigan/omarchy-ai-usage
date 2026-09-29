@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "sabrodigan.ai-usage",
   "name": "AI Model Usage",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Stephen Brodigan",
   "license": "AGPL-3.0-or-later",
-  "description": "Live multi-provider AI token, request and quota tracking in the Omarchy bar, with a popup breakdown and a jump to the full `usage watch` dashboard.",
+  "description": "Local AI agent token usage from session records, refreshed automatically. No API keys required.",
   "homepage": "https://github.com/sabrodigan/omarchy-ai-usage",
   "kinds": [
     "bar-widget"
@@ -15,23 +15,27 @@
   },
   "barWidget": {
     "displayName": "AI Model Usage",
-    "description": "Top AI provider's quota use on the bar; click for the full ranked breakdown.",
+    "description": "Monthly local token totals; click for active agents and estimated costs.",
     "category": "Developer Tools",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "badgeMetric": "Top usage %",
+      "badgeMetric": "Total tokens",
       "refreshIntervalSec": 60,
       "warnPercent": 80,
-      "timeoutSec": 8
+      "timeoutSec": 30
     },
     "schema": [
       {
         "key": "badgeMetric",
         "type": "enum",
         "label": "Bar badge shows",
-        "options": ["Top usage %", "Total cost", "Both"],
-        "defaultValue": "Top usage %",
+        "options": [
+          "Total tokens",
+          "Total cost",
+          "Both"
+        ],
+        "defaultValue": "Total tokens",
         "description": "What the compact badge on the bar displays."
       },
       {
@@ -42,7 +46,7 @@
         "max": 900,
         "step": 5,
         "defaultValue": 60,
-        "description": "How often live provider data is refreshed. Lower values hit provider APIs more often."
+        "description": "How often local session records are read."
       },
       {
         "key": "warnPercent",
@@ -59,10 +63,10 @@
         "type": "integer",
         "label": "Query timeout (seconds)",
         "min": 2,
-        "max": 30,
+        "max": 120,
         "step": 1,
-        "defaultValue": 8,
-        "description": "Per-refresh timeout passed to `usage`."
+        "defaultValue": 30,
+        "description": "Maximum time allowed for a local session scan."
       }
     ]
   }

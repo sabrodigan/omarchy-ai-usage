@@ -1,36 +1,134 @@
-#!/usr/bin/env bash
-# Resolve the `usage` binary and exec it with the given args.
-#
-# Preference order:
-#   1. A `usage` already on PATH (a real install the user manages / updates).
-#   2. The static binary bundled with this plugin, picked by CPU arch.
-#
-# The bundled binaries are CGO-free static Go builds, so they run on any glibc
-# or musl Omarchy install with no runtime dependencies.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Read local agent counters through Tokscale, plus `usage local` for agents Tokscale
+cannot see (Meta Muse, Cursor chat history). Never reads the usage key vault."""
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
 
-here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+NAMES = {"claude": "Claude CLI", "codex": "Codex", "antigravity-cli": "Antigravity CLI",
+         "antigravity": "Antigravity IDE", "cursor": "Cursor", "gemini": "Gemini CLI",
+         "copilot": "GitHub Copilot", "opencode": "OpenCode", "warp": "Warp", "muse": "Meta Muse"}
 
-if command -v usage >/dev/null 2>&1; then
-  exec usage "$@"
-fi
 
-case "$(uname -m)" in
-  x86_64 | amd64) arch=amd64 ;;
-  aarch64 | arm64) arch=arm64 ;;
-  *)
-    echo "omarchy-ai-usage: unsupported CPU architecture $(uname -m)" >&2
-    exit 1
-    ;;
-esac
+def executable():
+    override = os.environ.get("TOKSCALE_BIN")
+    candidate = override or shutil.which("tokscale") or str(Path.home() / ".local/bin/tokscale")
+    if not Path(candidate).is_file() or not os.access(candidate, os.X_OK):
+        raise RuntimeError("Install Tokscale (see the plugin README), then refresh.")
+    return candidate
 
-bundled="$here/usage-linux-$arch"
-if [[ ! -x "$bundled" ]]; then
-  chmod +x "$bundled" 2>/dev/null || true
-fi
-[[ -x "$bundled" ]] || {
-  echo "omarchy-ai-usage: bundled binary missing: $bundled" >&2
-  exit 1
-}
 
-exec "$bundled" "$@"
+def usage_executable():
+    """The `usage` CLI is optional: without it the widget shows Tokscale rows only."""
+    override = os.environ.get("USAGE_BIN")
+    candidate = override or shutil.which("usage") or str(Path.home() / ".local/bin/usage")
+    if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
+
+def local_rows(data):
+    """Convert `usage local --json` providers that carry a real per-model breakdown.
+
+    Estimated-only adapters (no `models`) are skipped; Tokscale covers those agents better.
+    """
+    rows = []
+    for p in (data or {}).get("providers") or []:
+        models = p.get("models") or []
+        consumed = p.get("consumed") or 0
+        if not models or consumed <= 0 or p.get("status") != "ok":
+            continue
+        unit = "requests" if p.get("unit") == "requests" else "tokens"
+        last = p.get("last_activity") or ""
+        rows.append({
+            "provider_id": p["provider_id"],
+            "display_name": NAMES.get(p["provider_id"], p.get("display_name") or p["provider_id"]),
+            "unit": unit, "consumed": consumed,
+            "messages": sum(m.get("requests", 0) for m in models),
+            "quota": None, "percent_used": None,
+            # Request-metered tools only expose a flat subscription price, not usage cost.
+            "estimated_cost_usd": p.get("estimated_cost_usd", 0) if unit == "tokens" else 0,
+            "status": "ok", "is_live": True, "data_source": p.get("data_source") or "usage local",
+            "last_activity": last[:10], "model_or_tier": p.get("model_or_tier") or "",
+            "models": models})
+    return rows
+
+
+def read_usage_local(timeout):
+    binary = usage_executable()
+    if not binary:
+        return []
+    try:
+        result = subprocess.run([binary, "local", "--json", "--no-config", "--timeout", str(timeout)],
+                                capture_output=True, text=True, timeout=timeout + 2, check=False)
+        if result.returncode:
+            return []
+        return local_rows(json.loads(result.stdout))
+    except (subprocess.TimeoutExpired, ValueError, KeyError, TypeError, AttributeError, OSError):
+        return []
+
+
+def normalize(data, extra=()):
+    if not isinstance(data, dict) or not isinstance(data.get("contributions"), list):
+        raise ValueError("Unsupported Tokscale output; expected contribution records")
+    providers = {}
+    for day in data["contributions"]:
+        for entry in day["clients"]:
+            client = entry["client"]
+            tokens = entry["tokens"]
+            amount = sum(tokens.get(k, 0) for k in ("input", "output", "cacheRead", "cacheWrite", "reasoning"))
+            messages = entry.get("messages", 0)
+            if amount < 0 or messages < 0:
+                raise ValueError("Invalid negative usage counter")
+            if not amount and not messages:
+                continue
+            row = providers.setdefault(client, {
+                "provider_id": client, "display_name": NAMES.get(client, client),
+                "unit": "tokens", "consumed": 0, "messages": 0,
+                "quota": None, "percent_used": None, "estimated_cost_usd": 0,
+                "status": "ok", "is_live": True, "data_source": "Local session records",
+                "last_activity": "", "model_or_tier": "Local usage · quota unavailable"})
+            row["consumed"] += amount
+            row["messages"] += messages
+            row["estimated_cost_usd"] += entry.get("cost", 0)
+            row["last_activity"] = max(row["last_activity"], day["date"])
+    for row in extra:
+        # Prefer Tokscale when it already reports the agent: it has token-level counters.
+        providers.setdefault(row["provider_id"], row)
+    rows = sorted(providers.values(), key=lambda p: (p["unit"] != "tokens", -p["consumed"], p["provider_id"]))
+    return {"timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "snapshot_mode": "LOCAL", "is_live": True, "providers": rows,
+            "total_tokens_consumed": sum(p["consumed"] for p in rows if p["unit"] == "tokens"),
+            "total_cost_usd": sum(p["estimated_cost_usd"] for p in rows)}
+
+
+def main(args):
+    try:
+        binary = executable()
+        if args and args[0] == "watch":
+            os.execv(sys.executable, [sys.executable, str(Path(__file__).with_name("dashboard")),
+                                     binary, "--refresh", "60", "tui", "--month"])
+        timeout = 30
+        if "--timeout" in args:
+            timeout = max(2, min(120, int(args[args.index("--timeout") + 1])))
+        result = subprocess.run([binary, "graph", "--month", "--no-spinner"],
+                                capture_output=True, text=True, timeout=timeout, check=False)
+        if result.returncode:
+            # Do not expose subprocess stderr: it can contain private paths or credentials.
+            raise RuntimeError("Local collector failed; check `tokscale clients` in a terminal.")
+        print(json.dumps(normalize(json.loads(result.stdout), read_usage_local(timeout)), allow_nan=False))
+        return 0
+    except subprocess.TimeoutExpired:
+        message = "Local scan timed out; increase Query timeout in plugin settings."
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError, IndexError) as exc:
+        message = str(exc) if isinstance(exc, RuntimeError) else "Unable to read local usage records; check Tokscale installation."
+    print(json.dumps({"error": message}))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

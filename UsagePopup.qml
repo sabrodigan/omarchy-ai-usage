@@ -20,6 +20,7 @@ PopupWindow {
   property bool failed: false
   property string errorText: ""
   property string snapshotMode: ""
+  property string updatedAt: ""
   property int warnPercent: 80
 
   signal refreshRequested()
@@ -77,7 +78,6 @@ PopupWindow {
   }
 
   anchor {
-    id: popupAnchor
     window: root.anchorWindow
     adjustment: PopupAdjustment.Slide
     edges: Edges.Top | Edges.Left
@@ -112,8 +112,8 @@ PopupWindow {
         point.y = Math.max(root.margin, Math.min(point.y, root.anchorWindow.height - h - root.margin))
       }
 
-      popupAnchor.rect.x = Math.round(point.x)
-      popupAnchor.rect.y = Math.round(point.y)
+      root.anchor.rect.x = Math.round(point.x)
+      root.anchor.rect.y = Math.round(point.y)
     }
   }
 
@@ -155,8 +155,8 @@ PopupWindow {
             font.bold: true
           }
           Text {
-            visible: root.snapshotMode === "EXAMPLE"
-            text: "example data — no providers configured"
+            visible: root.updatedAt !== ""
+            text: "Local · this month · refreshed " + new Date(root.updatedAt).toLocaleTimeString()
             color: root.safeMuted
             font.family: root.fontFamily
             font.pixelSize: 9
@@ -170,7 +170,7 @@ PopupWindow {
 
           Text {
             anchors.verticalCenter: parent.verticalCenter
-            text: root.loaded ? root.formatCost(root.totalCost) + " / mo" : ""
+            text: root.loaded ? "~" + root.formatCost(root.totalCost) + " est." : ""
             color: root.fg
             font.family: root.fontFamily
             font.pixelSize: 12
@@ -182,7 +182,7 @@ PopupWindow {
             anchors.verticalCenter: parent.verticalCenter
             Text {
               anchors.centerIn: parent
-              text: ""
+              text: "↻"
               color: root.fg
               font.family: root.fontFamily
               font.pixelSize: 13
@@ -226,13 +226,13 @@ PopupWindow {
         Text {
           width: parent.width
           wrapMode: Text.WordWrap
-          text: "No providers configured yet. Scan this machine for installed AI tools and API keys to start tracking."
+          text: "No usage records found this month. Complete an agent response, then refresh. Only agents with readable local usage appear here."
           color: root.safeMuted
           font.family: root.fontFamily
           font.pixelSize: 11
         }
         PopupButton {
-          label: "Scan for providers"
+          label: "Refresh local records"
           onClicked: root.scanRequested()
         }
       }
@@ -263,7 +263,7 @@ PopupWindow {
       // --- footer --------------------------------------------------------
       PopupButton {
         visible: root.loaded && !root.failed && root.providers.length > 0
-        label: "Open live dashboard  ▸"
+        label: "Open local usage dashboard  ▸"
         onClicked: root.watchRequested()
       }
     }
@@ -305,14 +305,14 @@ PopupWindow {
     readonly property real pct: modelData.percent_used || 0
     readonly property bool warn: pct >= root.warnPercent
     readonly property real cost: modelData.estimated_cost_usd || 0
-    height: 44
+    height: 60
 
     // Line 1 — provider name + tier on the left, percent pinned right.
     Text {
       id: pctText
       anchors.right: parent.right
       anchors.top: parent.top
-      text: Math.round(rowDelegate.pct) + "%"
+      text: modelData.quota > 0 ? Math.round(rowDelegate.pct) + "%" : "local"
       color: rowDelegate.warn ? root.urgent : root.fg
       font.family: root.fontFamily
       font.pixelSize: 12
@@ -345,6 +345,16 @@ PopupWindow {
       }
     }
 
+    Text {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.topMargin: 20
+      text: "Last activity: " + (modelData.last_activity || "unknown")
+      color: root.safeMuted
+      font.family: root.fontFamily
+      font.pixelSize: 9
+    }
+
     // Line 2 — progress track fills the row, amounts pinned right.
     Text {
       id: amountText
@@ -352,8 +362,9 @@ PopupWindow {
       anchors.bottom: parent.bottom
       anchors.bottomMargin: 2
       text: root.formatAmount(modelData.consumed || 0, modelData.unit)
-            + " / " + root.formatAmount(modelData.quota || 0, modelData.unit)
-            + (rowDelegate.cost > 0 ? "   " + root.formatCost(rowDelegate.cost) : "")
+            + (modelData.unit === "requests" ? ""
+               : " tokens · " + (modelData.messages || 0) + " responses")
+            + (rowDelegate.cost > 0 ? "   ~" + root.formatCost(rowDelegate.cost) : "")
       color: root.safeMuted
       font.family: root.fontFamily
       font.pixelSize: 9
@@ -361,6 +372,7 @@ PopupWindow {
 
     Rectangle {
       id: track
+      visible: modelData.quota > 0
       anchors.left: parent.left
       anchors.right: amountText.left
       anchors.rightMargin: 10
