@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # weekly: catch a new `usage` release breaking the widget
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Manifest is valid JSON with the expected id
+        run: python3 -c "import json; m = json.load(open('manifest.json')); assert m['id'] == 'sabrodigan.ai-usage', m['id']"
+
+      - name: Collector compiles
+        run: python3 -m py_compile bin/usage-run bin/dashboard
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      # End-to-end: run the collector against the latest published `usage` binary.
+      - name: Download latest usage release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo sabrodigan/ai-usage-command \
+            --pattern usage-linux-amd64 --pattern SHA256SUMS --dir "$RUNNER_TEMP/usage"
+          cd "$RUNNER_TEMP/usage"
+          sha256sum --check --ignore-missing SHA256SUMS
+          chmod +x usage-linux-amd64
+
+      - name: Contract test against usage release
+        run: USAGE_BIN="$RUNNER_TEMP/usage/usage-linux-amd64" python3 -m unittest tests.test_usage.UsageLocalContractTest -v

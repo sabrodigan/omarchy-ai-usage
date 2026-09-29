@@ -95,14 +95,21 @@ configuration are unaffected; the private session exits when you quit with `q`.
 ## Validate
 
 ```bash
-omarchy plugin validate .
-python3 -m unittest discover -s tests -v
+make test       # unit tests
+make contract   # end-to-end: runs the real `usage` on PATH (or USAGE_BIN=...) against synthetic Muse/Cursor data
+make check      # both, plus `omarchy plugin validate`
+make install    # pull the pushed version into the installed plugin (omarchy plugin update)
 bin/usage-run now --json --timeout 30
 ```
 
-`bin/usage-run` intentionally uses the local collector rather than an unrelated
-`usage` executable on PATH. This prevents older installed binaries from silently
-restoring API-key checks or inaccurate estimates.
+CI (`.github/workflows/ci.yml`) runs the unit tests on every push and weekly, and
+the contract test against the latest published `usage` release, so a CLI change
+that would break the widget fails here. The `usage` repo runs the same tests
+against every commit it builds.
+
+`bin/usage-run` only ever calls `usage local --json --no-config`: local session
+records, no config, keys or network. Older `usage` binaries without that command
+are ignored rather than falling back to API-key checks or estimates.
 
 ## License
 

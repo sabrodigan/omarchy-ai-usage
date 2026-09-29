@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -111,6 +113,68 @@ class UsageTest(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn('Install Tokscale', result.stdout)
+
+
+USAGE_BIN = os.environ.get('USAGE_BIN', '')
+
+
+@unittest.skipUnless(USAGE_BIN and os.access(USAGE_BIN, os.X_OK),
+                     'set USAGE_BIN to a usage 2.2.0+ binary to run the end-to-end contract test')
+class UsageLocalContractTest(unittest.TestCase):
+    """Runs the real `usage` binary against a synthetic home directory."""
+
+    def build_home(self, home):
+        now = time.time()
+        muse = home / '.local/share/muse'
+        session = muse / 'sessions' / time.strftime('%Y/%m/%d') / 'contract-session'
+        session.mkdir(parents=True)
+        event = lambda kind, model, usage: json.dumps({
+            'payload_type': 'runtime.session', 'recorded_at': int(now * 1e6),
+            'payload': {'kind': 'run', 'event': {'kind': kind, 'model': model, 'usage': usage}}})
+        (session / 'session.jsonl').write_text('\n'.join([
+            event('model_completed', 'muse-spark-1.3',
+                  {'input_tokens': 1_000_000, 'cached_tokens': 400_000, 'output_tokens': 100_000}),
+            event('automated_review_completed', {'model_id': 'muse-spark-1.3'},
+                  {'input_tokens': 1000, 'cached_input_tokens': 0, 'output_tokens': 10}),
+            event('goal_usage_attribution', None, None)]) + '\n')
+        (muse / 'model-catalog').mkdir()
+        (muse / 'model-catalog/meta.json').write_text(json.dumps({'rows': [{
+            'model_id': 'muse-spark-1.3', 'cost': {'input': '1.25', 'output': '4.25', 'cached': '0.15'}}]}))
+
+        state = home / '.config/Cursor/User/globalStorage'
+        state.mkdir(parents=True)
+        stamp = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(now))
+        with sqlite3.connect(state / 'state.vscdb') as db:
+            db.execute('CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
+            db.executemany('INSERT INTO cursorDiskKV VALUES (?, ?)', [
+                ('composerData:c1', json.dumps({'modelConfig': {'modelName': 'grok-4.6'}})),
+                ('bubbleId:c1:b1', json.dumps({'type': 1, 'createdAt': stamp, 'modelInfo': {'modelName': 'grok-4.6'}})),
+                ('bubbleId:c1:b2', json.dumps({'type': 1, 'createdAt': stamp})),
+                ('bubbleId:c1:b3', json.dumps({'type': 2, 'createdAt': stamp}))])
+
+        # A config that disables both agents proves --no-config ignores it.
+        vault = home / '.config/ai-usage'
+        vault.mkdir(parents=True)
+        (vault / 'config.json').write_text(json.dumps({'providers': {
+            'muse': {'id': 'muse', 'enabled': False}, 'cursor': {'id': 'cursor', 'enabled': False}}}))
+
+    def test_muse_and_cursor_rows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            self.build_home(home)
+            env = {'HOME': str(home), 'XDG_CONFIG_HOME': str(home / '.config'), 'USAGE_BIN': USAGE_BIN}
+            with patch.dict(os.environ, env):
+                rows = {r['provider_id']: r for r in collector.read_usage_local(20)}
+
+        self.assertEqual(set(rows), {'muse', 'cursor'})
+        muse, cursor = rows['muse'], rows['cursor']
+        self.assertEqual((muse['unit'], muse['consumed'], muse['messages']), ('tokens', 1_101_010, 2))
+        self.assertEqual(muse['model_or_tier'], 'muse-spark-1.3 (2)')
+        cost = (601_000 * 1.25 + 400_000 * 0.15 + 100_010 * 4.25) / 1e6
+        self.assertAlmostEqual(muse['estimated_cost_usd'], cost, places=9)
+        self.assertEqual(muse['last_activity'], time.strftime('%Y-%m-%d', time.gmtime()))
+        self.assertEqual((cursor['unit'], cursor['consumed'], cursor['estimated_cost_usd']), ('requests', 2, 0))
+        self.assertEqual(cursor['model_or_tier'], 'grok-4.6 (2)')
 
 
 if __name__ == '__main__':
